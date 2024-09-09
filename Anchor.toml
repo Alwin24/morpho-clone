@@ -14,5 +14,32 @@ url = "https://api.apr.dev"
 cluster = "Localnet"
 wallet = "~/.config/solana/id.json"
 
+[test]
+startup_wait = 10000
+
+[test.validator]
+url = "https://api.mainnet-beta.solana.com"
+
+[[test.validator.clone]]
+address = "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD"
+[[test.validator.clone]]
+address = "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF"
+[[test.validator.clone]]
+address = "d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q"
+[[test.validator.clone]]
+address = "4AwZaNwGsvKzd4YZF6ogH6BUv5SBDEN4uCgsiTrDvBLV"
+[[test.validator.clone]]
+address = "FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr"
+[[test.validator.clone]]
+address = "955xWFhSDcDiUgUr4sBRtCpTLiMd4H5uZLAmgtP3R3sX"
+[[test.validator.clone]]
+address = "3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C"
+[[test.validator.clone]]
+address = "GafNuUXj9rxGLn4y79dPu6MHSuPWeJR6UtTWuexpGh3U"
+[[test.validator.clone]]
+address = "2UywZrUdyqs5vDchy7fKQJKau2RVyuzBev2XKGPDSiX1"
+[[test.validator.clone]]
+address = "8NXMyRD91p3nof61BTkJvrfpGTASHygz1cUvc3HvwyGS"
+
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
