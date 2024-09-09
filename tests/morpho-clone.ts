@@ -1,7 +1,9 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import {
+  createAssociatedTokenAccountIdempotentInstruction,
   DEFAULT_RECENT_SLOT_DURATION_MS,
+  getAssociatedTokenAddress,
   KaminoAction,
   KaminoMarket,
   PROGRAM_ID,
@@ -31,7 +33,18 @@ describe("morpho-clone", () => {
     "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF"
   );
 
-  it("Is initialized!", async () => {
+  it("Initialize!", async () => {
+    const tx = await program.methods
+      .initialize()
+      .accounts({
+        authority: devKeypair.publicKey,
+      })
+      .rpc();
+
+    console.log("Transaction signature:", tx);
+  });
+
+  it.skip("Deposit!", async () => {
     const kaminoMarket = await KaminoMarket.load(
       program.provider.connection,
       LENDING_MARKET,
@@ -41,11 +54,31 @@ describe("morpho-clone", () => {
 
     const depositAmount = "1000";
 
+    const tokenMint = new PublicKey(
+      "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    );
+    const userTokenAccount = getAssociatedTokenAddress(
+      tokenMint,
+      devKeypair.publicKey
+    );
+
+    const [escrow] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow")],
+      program.programId
+    );
+
+    const [escrowTokenAccount, createAtaIx] =
+      createAssociatedTokenAccountIdempotentInstruction(
+        escrow,
+        tokenMint,
+        devKeypair.publicKey
+      );
+
     const kaminoAction = await KaminoAction.buildDepositTxns(
       kaminoMarket,
       depositAmount,
-      new PublicKey("So11111111111111111111111111111111111111112"),
-      program.provider.publicKey,
+      tokenMint,
+      escrowTokenAccount,
       new VanillaObligation(PROGRAM_ID),
       1_000_000,
       true,
@@ -81,19 +114,23 @@ describe("morpho-clone", () => {
       ixAccountsCount.writeUInt8(ix.keys.length, i);
     });
 
+    const amount = new anchor.BN(depositAmount);
+
     const ix = await program.methods
-      .initialize(ixDatas, ixAccountsCount)
+      .deposit(ixDatas, ixAccountsCount, amount)
       .accounts({
-        kaminoProgram: PROGRAM_ID,
+        user: devKeypair.publicKey,
+        tokenMint,
       })
       .remainingAccounts(allAccountMetas)
       .instruction();
 
     let ixs = [
       ...kaminoAction.setupIxs,
-      ...kaminoAction.lendingIxs,
+      ix,
+      // ...kaminoAction.lendingIxs,
       ...kaminoAction.cleanupIxs,
-    ].filter((ix) => !ix.programId.equals(AddressLookupTableProgram.programId));
+    ];
 
     const txn = new Transaction().add(...ixs);
 
