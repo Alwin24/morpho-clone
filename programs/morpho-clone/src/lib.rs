@@ -8,7 +8,7 @@ use anchor_spl::{
     token::{Mint, Token, TokenAccount},
 };
 
-pub const KAMINO_PROGRAM_ID: Pubkey = pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
+pub const KAMINO_PROGRAM_ID: Pubkey = pubkey!("SLendK7ySfcEzyaFqy93gDnD3RtrpXJcnRwb6zFHJSh");
 pub const ESCROW_SEED: &[u8] = b"escrow";
 
 declare_id!("AVS1hieS2uEKeCCmoJgCG7DS28dpiz7F71qovBwBNV9j");
@@ -17,9 +17,7 @@ declare_id!("AVS1hieS2uEKeCCmoJgCG7DS28dpiz7F71qovBwBNV9j");
 pub mod morpho_clone {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        let amount = 1000000;
-
+    pub fn initialize(ctx: Context<Initialize>, amount: u64) -> Result<()> {
         anchor_lang::system_program::transfer(
             CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
@@ -94,12 +92,14 @@ pub mod morpho_clone {
 pub struct Initialize<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
+
+    ///CHECK:
     #[account(
         mut,
         seeds = [ESCROW_SEED],
         bump,
     )]
-    pub escrow: SystemAccount<'info>,
+    pub escrow: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -113,21 +113,20 @@ pub struct Deposit<'info> {
         constraint = user_token_account.owner == user.key() &&
         user_token_account.mint == token_mint.key()
     )]
-    pub user_token_account: Account<'info, TokenAccount>,
+    pub user_token_account: Box<Account<'info, TokenAccount>>,
+
+    ///CHECK:
     #[account(
         mut,
         seeds = [ESCROW_SEED],
         bump,
     )]
-    pub escrow: SystemAccount<'info>,
+    pub escrow: AccountInfo<'info>,
 
     #[account(
-        init_if_needed,
-        payer = user,
+        mut,
         associated_token::mint = token_mint,
         associated_token::authority = escrow,
-        constraint = escrow_token_account.owner == escrow.key() &&
-        escrow_token_account.mint == token_mint.key()
     )]
     pub escrow_token_account: Box<Account<'info, TokenAccount>>,
     pub token_mint: Box<Account<'info, Mint>>,
