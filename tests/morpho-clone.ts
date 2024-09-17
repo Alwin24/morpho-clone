@@ -29,20 +29,20 @@ describe("morpho-clone", () => {
   const program = anchor.workspace.MorphoClone as Program<MorphoClone>;
 
   const PROGRAM_ID = new PublicKey(
-    "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD"
-    // "SLendK7ySfcEzyaFqy93gDnD3RtrpXJcnRwb6zFHJSh"
+    // "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD"
+    "SLendK7ySfcEzyaFqy93gDnD3RtrpXJcnRwb6zFHJSh"
   );
 
   const LENDING_MARKET = new PublicKey(
-    "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF"
-    // "N5rxNZrDorPdcLSGF7tam7SfnPYFB3kF6TpZiNMSeCG"
+    // "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF"
+    "N5rxNZrDorPdcLSGF7tam7SfnPYFB3kF6TpZiNMSeCG"
   );
 
-  it.skip("Initialize!", async () => {
+  it.skip("Initialize Escrow!", async () => {
     const amount = new anchor.BN(10 ** 7);
 
     const tx = await program.methods
-      .initialize(amount)
+      .initializeEscrow(amount)
       .accounts({
         authority: devKeypair.publicKey,
       })
@@ -56,10 +56,12 @@ describe("morpho-clone", () => {
       program.provider.connection,
       LENDING_MARKET,
       DEFAULT_RECENT_SLOT_DURATION_MS,
-      PROGRAM_ID
+      PROGRAM_ID,
+      true,
+      true
     );
 
-    const depositAmount = (10 ** 6 * 0.001).toString();
+    const depositAmount = (10 ** 6 * 0.0001).toString();
 
     const tokenMint = new PublicKey(
       "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
@@ -96,100 +98,116 @@ describe("morpho-clone", () => {
     let blockhashWithContext =
       await program.provider.connection.getLatestBlockhash("processed");
 
-    if (kaminoAction.preTxnIxs.length > 0) {
-      const preTxn = new Transaction().add(...kaminoAction.preTxnIxs);
-      preTxn.feePayer = program.provider.publicKey;
-      preTxn.recentBlockhash = blockhashWithContext.blockhash;
-      preTxn.partialSign(devKeypair);
-      const sign = await program.provider.connection.sendRawTransaction(
-        preTxn.serialize()
-      );
-      console.log("Pre-transaction signature:", sign);
-    }
-
-    const kaminoIxs = [
-      // ...kaminoAction.setupIxs,
+    const ixs = [
+      ...kaminoAction.setupIxs,
       ...kaminoAction.lendingIxs,
-      // ...kaminoAction.cleanupIxs,
-    ];
+      ...kaminoAction.cleanupIxs,
+    ].map((ix) => {
+      ix.keys.forEach((key) => {
+        if (key.isSigner && key.isWritable) {
+          key.pubkey = devKeypair.publicKey;
+        }
+        if (key.pubkey.equals(escrow)) {
+          key.isSigner = false;
+          key.isWritable = true;
+        }
+      });
 
-    const allAccountMetas = kaminoIxs.flatMap((ix) => ix.keys);
+      return ix;
+    });
 
-    const ixDatas = kaminoIxs.map((ix) => ix.data);
-    const ixAccountsCount = Buffer.alloc(kaminoIxs.length);
+    const cpiIxs = ixs.filter((ix) => ix.programId.equals(PROGRAM_ID));
+    cpiIxs[cpiIxs.length - 1].keys[0] = {
+      pubkey: escrow,
+      isSigner: false,
+      isWritable: true,
+    };
 
-    kaminoIxs.forEach((ix, i) => {
-      ixAccountsCount.writeUInt8(ix.keys.length, i);
+    const cpiIxs1 = cpiIxs.slice(0, 2);
+    const cpiIxs2 = cpiIxs.slice(-1);
+
+    const otherIxs = ixs.filter((ix) => !ix.programId.equals(PROGRAM_ID));
+    otherIxs[1].keys[1] = {
+      pubkey: escrow,
+      isSigner: false,
+      isWritable: false,
+    };
+
+    writeFileSync(
+      "kaminoAction/cpiIxs1.json",
+      JSON.stringify(cpiIxs1, null, 2)
+    );
+    writeFileSync(
+      "kaminoAction/cpiIxs.json",
+      JSON.stringify(cpiIxs.slice(2, 4), null, 2)
+    );
+    writeFileSync(
+      "kaminoAction/cpiIxs2.json",
+      JSON.stringify(cpiIxs2, null, 2)
+    );
+    writeFileSync(
+      "kaminoAction/otherIxs.json",
+      JSON.stringify(otherIxs, null, 2)
+    );
+
+    const allAccountMetas1 = cpiIxs1.flatMap((ix) => ix.keys);
+
+    const ixDatas1 = cpiIxs1.map((ix) => ix.data);
+    const ixAccountsCount1 = Buffer.alloc(cpiIxs1.length);
+
+    cpiIxs1.forEach((ix, i) => {
+      ixAccountsCount1.writeUInt8(ix.keys.length, i);
+    });
+
+    const ix1 = await program.methods
+      .initialize(ixDatas1, ixAccountsCount1)
+      .accounts({
+        user: devKeypair.publicKey,
+      })
+      .remainingAccounts(allAccountMetas1)
+      .instruction();
+
+    const allAccountMetas2 = cpiIxs2.flatMap((ix) => ix.keys);
+
+    const ixDatas2 = cpiIxs2.map((ix) => ix.data);
+    const ixAccountsCount2 = Buffer.alloc(cpiIxs2.length);
+
+    cpiIxs2.forEach((ix, i) => {
+      ixAccountsCount2.writeUInt8(ix.keys.length, i);
     });
 
     const amount = new anchor.BN(depositAmount);
 
-    const ix = await program.methods
-      .deposit(ixDatas, ixAccountsCount, amount)
+    const ix2 = await program.methods
+      .deposit(ixDatas2, ixAccountsCount2, amount)
       .accounts({
         user: devKeypair.publicKey,
         userTokenAccount,
         tokenMint,
+        escrowTokenAccount,
       })
-      .remainingAccounts(allAccountMetas)
+      .remainingAccounts(allAccountMetas2)
       .instruction();
 
-    let ixs = [
-      ...kaminoAction.setupIxs,
-      // ix,
-      ...kaminoAction.lendingIxs,
-      ...kaminoAction.cleanupIxs,
-    ].filter((ix) => !ix.programId.equals(AddressLookupTableProgram.programId));
+    otherIxs.splice(2, 0, ...[ix1, ...cpiIxs.slice(2, 4), ix2]);
 
-    const targetBytes1 = Buffer.from([117, 169, 176, 69, 197, 23, 15, 162]);
-    const targetBytes2 = Buffer.from([251, 10, 231, 76, 27, 11, 159, 96]);
-    const targetBytes3 = Buffer.from([136, 63, 15, 186, 211, 152, 168, 164]);
-
-    ixs.forEach((ix) => {
-      if (
-        Buffer.compare(ix.data.slice(0, 8), targetBytes1) === 0 ||
-        Buffer.compare(ix.data.slice(0, 8), targetBytes2) === 0
-      ) {
-        ix.keys.at(0).isSigner = false;
-        ix.keys.at(0).isWritable = true;
-        ix.keys.at(1).pubkey = devKeypair.publicKey;
-      }
-
-      if (Buffer.compare(ix.data.slice(0, 8), targetBytes3) === 0) {
-        ix.keys.at(0).pubkey = devKeypair.publicKey;
-        ix.keys.at(1).isSigner = false;
-        ix.keys.at(1).isWritable = true;
-      }
-    });
-
-    // ixs.forEach((ix) => {
-    //   ix.keys.forEach((key) => {
-    //     if (key.pubkey.equals(escrow)) {
-    //       key.isWritable = true;
-    //       key.isSigner = false;
-    //     }
-    //   });
-    // });
-
-    // writeFileSync("kaminoAction/setupIxs.json", JSON.stringify(ixs, null, 2));
-
-    const txn = new Transaction().add(...ixs);
+    const txn = new Transaction().add(...otherIxs);
 
     txn.feePayer = devKeypair.publicKey;
     txn.recentBlockhash = blockhashWithContext.blockhash;
     txn.partialSign(devKeypair);
 
-    // const sign = await program.provider.connection.sendRawTransaction(
-    //   txn.serialize()
-    // );
-    const simulation = await program.provider.connection.simulateTransaction(
-      txn
+    const sign = await program.provider.connection.sendRawTransaction(
+      txn.serialize()
     );
+    // const simulation = await program.provider.connection.simulateTransaction(
+    //   txn
+    // );
 
     console.log(
       "Transaction signature:",
-      simulation.value
-      // sign
+      // simulation.value
+      sign
     );
   });
 });
