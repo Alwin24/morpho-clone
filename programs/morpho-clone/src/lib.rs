@@ -37,49 +37,14 @@ pub mod morpho_clone {
         ix_datas: Vec<Vec<u8>>,
         ix_accounts_counts: Vec<u8>,
     ) -> Result<()> {
-        let escrow = &mut ctx.accounts.escrow;
-        let remaining_accounts = &ctx.remaining_accounts;
-
-        msg!("Remaining accounts: {}", remaining_accounts.len());
-
-        let accounts: Vec<AccountMeta> = remaining_accounts
-            .iter()
-            .map(|acc| AccountMeta {
-                pubkey: *acc.key,
-                is_signer: if acc.key.eq(escrow.key) { true } else { acc.is_signer },
-                is_writable: acc.is_writable,
-            })
-            .collect();
-        msg!("Accounts: {}", accounts.len());
-
-        let signer_seeds = &[ESCROW_SEED, &[ctx.bumps.escrow]];
-
-        for i in 0..ix_accounts_counts.len() {
-            let mut start = 0;
-            let mut end = 0;
-            for j in 0..i {
-                start += ix_accounts_counts[j] as usize;
-            }
-            for j in 0..=i {
-                end += ix_accounts_counts[j] as usize;
-            }
-
-            msg!("ix_accounts_counts: {}", ix_accounts_counts[i]);
-            msg!("Invoking ix: {}, start: {}, end: {}", i, start, end);
-            msg!("Data: {:?}", ix_datas[i]);
-
-            invoke_signed(
-                &Instruction {
-                    program_id: ctx.accounts.kamino_program.key(),
-                    accounts: accounts[start..end].to_vec(),
-                    data: ix_datas[i].clone(),
-                },
-                &remaining_accounts[start..end].to_vec(),
-                &[signer_seeds],
-            )?;
-        }
-
-        Ok(())
+        execute_kamino_instructions(
+            ctx.accounts.escrow.key,
+            ctx.accounts.kamino_program.key,
+            ctx.bumps.escrow,
+            ctx.remaining_accounts,
+            ix_datas,
+            ix_accounts_counts,
+        )
     }
 
     pub fn deposit(
@@ -100,50 +65,62 @@ pub mod morpho_clone {
             amount,
         )?;
 
-        let escrow = &mut ctx.accounts.escrow;
-        let remaining_accounts = &ctx.remaining_accounts;
+        execute_kamino_instructions(
+            ctx.accounts.escrow.key,
+            ctx.accounts.kamino_program.key,
+            ctx.bumps.escrow,
+            ctx.remaining_accounts,
+            ix_datas,
+            ix_accounts_counts,
+        )
+    }
+}
 
-        msg!("Remaining accounts: {}", remaining_accounts.len());
+fn execute_kamino_instructions<'info>(
+    escrow_key: &Pubkey,
+    kamino_program_key: &Pubkey,
+    escrow_bump: u8,
+    remaining_accounts: &[AccountInfo<'info>],
+    ix_datas: Vec<Vec<u8>>,
+    ix_accounts_counts: Vec<u8>,
+) -> Result<()> {
+    let accounts: Vec<AccountMeta> = remaining_accounts
+        .iter()
+        .map(|acc| AccountMeta {
+            pubkey: *acc.key,
+            is_signer: if acc.key.eq(escrow_key) {
+                true
+            } else {
+                acc.is_signer
+            },
+            is_writable: acc.is_writable,
+        })
+        .collect();
 
-        let accounts: Vec<AccountMeta> = remaining_accounts
-            .iter()
-            .map(|acc| AccountMeta {
-                pubkey: *acc.key,
-                is_signer: if acc.key.eq(escrow.key) { true } else { acc.is_signer },
-                is_writable: acc.is_writable,
-            })
-            .collect();
-        msg!("Accounts: {}", accounts.len());
+    let signer_seeds = &[ESCROW_SEED, &[escrow_bump]];
 
-        let signer_seeds = &[ESCROW_SEED, &[ctx.bumps.escrow]];
-
-        for i in 0..ix_accounts_counts.len() {
-            let mut start = 0;
-            let mut end = 0;
-            for j in 0..i {
-                start += ix_accounts_counts[j] as usize;
-            }
-            for j in 0..=i {
-                end += ix_accounts_counts[j] as usize;
-            }
-
-            msg!("ix_accounts_counts: {}", ix_accounts_counts[i]);
-            msg!("Invoking ix: {}, start: {}, end: {}", i, start, end);
-            msg!("Data: {:?}", ix_datas[i]);
-
-            invoke_signed(
-                &Instruction {
-                    program_id: ctx.accounts.kamino_program.key(),
-                    accounts: accounts[start..end].to_vec(),
-                    data: ix_datas[i].clone(),
-                },
-                &remaining_accounts[start..end].to_vec(),
-                &[signer_seeds],
-            )?;
+    for i in 0..ix_accounts_counts.len() {
+        let mut start = 0;
+        let mut end = 0;
+        for j in 0..i {
+            start += ix_accounts_counts[j] as usize;
+        }
+        for j in 0..=i {
+            end += ix_accounts_counts[j] as usize;
         }
 
-        Ok(())
+        invoke_signed(
+            &Instruction {
+                program_id: *kamino_program_key,
+                accounts: accounts[start..end].to_vec(),
+                data: ix_datas[i].clone(),
+            },
+            &remaining_accounts[start..end].to_vec(),
+            &[signer_seeds],
+        )?;
     }
+
+    Ok(())
 }
 
 #[derive(Accounts)]
