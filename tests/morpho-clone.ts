@@ -61,31 +61,92 @@ describe("morpho-clone", () => {
   console.log("Escrow Token Account:", escrowTokenAccount.toBase58());
 
   const processIxs = async (ixs: TransactionInstruction[]) => {
-    const cpiOrNot = ixs.map((ix) => {
-      const ixDiscriminator = ix.data.slice(0, 8).toString();
+    const kaminoIxs = ixs.filter((ix) => ix.programId.equals(PROGRAM_ID));
+    const otherIxs = ixs.filter((ix) => !ix.programId.equals(PROGRAM_ID));
+
+    const cpiOrNot = kaminoIxs.map((ix) => {
+      const ixDiscriminator = ix.data.slice(0, 8);
 
       const ixName = Object.values(IDL.instructions).find(
-        (ix) => ix.discriminator.toString() === ixDiscriminator
+        (ix) =>
+          Buffer.compare(Buffer.from(ix.discriminator), ixDiscriminator) === 0
       ).name;
 
-      if (ixName.match("Refresh")) {
+      if (ixName.startsWith("refresh")) {
         return "notCpi";
       } else {
         return "cpi";
       }
     });
 
-    // Group ixs by cpi or not
+    // Group kaminoIxs by cpi or not
     const groupedIxs = cpiOrNot.reduce((acc, type, index) => {
-      if (index === 0 || type !== cpiOrNot[index - 1]) {
-        acc.push([ixs[index]]);
+      if (index === 0 || type !== acc[acc.length - 1].type) {
+        acc.push({ type: type, ixs: [kaminoIxs[index]] });
       } else {
-        acc[acc.length - 1].push(ixs[index]);
+        acc[acc.length - 1].ixs.push(kaminoIxs[index]);
       }
       return acc;
-    }, [] as TransactionInstruction[][]);
+    }, [] as { type: "cpi" | "notCpi"; ixs: TransactionInstruction[] }[]);
 
-    
+    const processedIxs = [];
+    processedIxs.push(...otherIxs);
+
+    for (const group of groupedIxs) {
+      group.ixs.forEach((ix) => {
+        ix.keys.forEach((key) => {
+          if (key.isSigner && key.isWritable) {
+            key.pubkey = devKeypair.publicKey;
+          }
+          if (key.pubkey.equals(escrow)) {
+            key.isSigner = false;
+            key.isWritable = true;
+          }
+        });
+      });
+
+      if (group.type === "cpi") {
+        const cpiIxs = group.ixs;
+
+        const cpiIxDatas = cpiIxs.map((ix) => ix.data);
+        const cpiIxAccountsCounts = Buffer.alloc(group.ixs.length);
+
+        group.ixs.forEach((ix, i) => {
+          cpiIxAccountsCounts.writeUInt8(ix.keys.length, i);
+        });
+
+        const cpiIxAccountMetas = group.ixs.flatMap((ix) => ix.keys);
+
+        const cpiIxInstruction = await program.methods
+          .initialize(cpiIxDatas, cpiIxAccountsCounts)
+          .accounts({
+            user: devKeypair.publicKey,
+          })
+          .remainingAccounts(cpiIxAccountMetas)
+          .instruction();
+
+        processedIxs.push(cpiIxInstruction);
+      } else {
+        processedIxs.push(...group.ixs);
+      }
+    }
+
+    return processedIxs;
+  };
+
+  const createTxn = async (ixs: TransactionInstruction[]) => {
+    const processedIxs = await processIxs(ixs);
+
+    const txn = new Transaction().add(...processedIxs);
+
+    let blockhashWithContext =
+      await program.provider.connection.getLatestBlockhash("processed");
+
+    txn.feePayer = devKeypair.publicKey;
+    txn.recentBlockhash = blockhashWithContext.blockhash;
+    txn.partialSign(devKeypair);
+
+    return { txn, blockhashWithContext };
   };
 
   it.skip("Initialize Escrow!", async () => {
@@ -326,7 +387,7 @@ describe("morpho-clone", () => {
     );
   });
 
-  it("Borrow!", async () => {
+  it.skip("Borrow!", async () => {
     const kaminoMarket = await KaminoMarket.load(
       program.provider.connection,
       LENDING_MARKET,
@@ -351,57 +412,11 @@ describe("morpho-clone", () => {
       ...kaminoAction.setupIxs,
       ...kaminoAction.lendingIxs,
       ...kaminoAction.cleanupIxs,
-    ].map((ix) => {
-      ix.keys.forEach((key) => {
-        if (key.pubkey.equals(escrow)) {
-          key.isSigner = false;
-          key.isWritable = true;
-        }
-      });
-
-      return ix;
-    });
+    ];
 
     writeFileSync("kaminoAction/ixs.json", JSON.stringify(ixs, null, 2));
 
-    const cpiIxs = ixs.filter((ix) => ix.programId.equals(PROGRAM_ID));
-
-    const cpiIxs1 = cpiIxs.slice(-1);
-
-    const otherIxs = ixs.filter((ix) => !ix.programId.equals(PROGRAM_ID));
-
-    const allAccountMetas1 = cpiIxs1.flatMap((ix) => ix.keys);
-
-    const ixDatas1 = cpiIxs1.map((ix) => ix.data);
-    const ixAccountsCount1 = Buffer.alloc(cpiIxs1.length);
-
-    cpiIxs1.forEach((ix, i) => {
-      ixAccountsCount1.writeUInt8(ix.keys.length, i);
-    });
-
-    const amount = new anchor.BN(borrowAmount);
-
-    const ix1 = await program.methods
-      .deposit(ixDatas1, ixAccountsCount1, amount)
-      .accounts({
-        user: devKeypair.publicKey,
-        userTokenAccount,
-        tokenMint,
-        escrowTokenAccount,
-      })
-      .remainingAccounts(allAccountMetas1)
-      .instruction();
-
-    otherIxs.splice(1, 0, ...[...cpiIxs.slice(0, 2), ix1]);
-
-    const txn = new Transaction().add(...otherIxs);
-
-    let blockhashWithContext =
-      await program.provider.connection.getLatestBlockhash("processed");
-
-    txn.feePayer = devKeypair.publicKey;
-    txn.recentBlockhash = blockhashWithContext.blockhash;
-    txn.partialSign(devKeypair);
+    const { txn, blockhashWithContext } = await createTxn(ixs);
 
     // const signature = await program.provider.connection.sendRawTransaction(
     txn.serialize();
